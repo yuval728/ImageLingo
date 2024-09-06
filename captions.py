@@ -5,7 +5,7 @@ import json
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+# import matplotlib.cm as cm
 import skimage.transform
 import argparse
 import warnings
@@ -145,7 +145,7 @@ def visualize_att(image_path, seq, alphas, rev_word_map, smooth=True):
     """
     
     image = Image.open(image_path)
-    image = image.resize([14*24, 14*24], Image.LANCZOS)
+    image = image.resize((14*24, 14*24), Image.LANCZOS)
     
     words = [rev_word_map[ind] for ind in seq]
     
