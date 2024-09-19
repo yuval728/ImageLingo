@@ -4,12 +4,13 @@ import torch.utils
 import torch.utils.data
 import torchvision.transforms as transforms
 from datasets import CaptionDataset
-from utils import *
+from utils import *  # noqa: F403
 from nltk.translate.bleu_score import corpus_bleu
 import torch.nn.functional as F
 from tqdm import tqdm
 import json
 import warnings
+import mlflow
 warnings.filterwarnings("ignore")
 
 
@@ -177,4 +178,14 @@ def evaluate(beam_size):
 
 if __name__ == '__main__':
     beam_size = 1
-    print("\nBLEU-4 score @ beam size of %d is %.4f." % (beam_size, evaluate(beam_size)))
+    
+    mlflow.set_experiment("Image Captioning")
+    mlflow.set_tracking_uri("http://localhost:5000")
+    run_id = input("Enter the run ID: ")
+    with mlflow.start_run( run_id=run_id, nested=True):
+        mlflow.log_param("Beam Size", beam_size)
+        bleu = evaluate(beam_size)
+        mlflow.log_metric("BLEU-4", bleu)
+        
+        
+    print("\nBLEU-4 score @ beam size of %d is %.4f." % (beam_size, bleu))

@@ -7,13 +7,15 @@ import torchvision.transforms as transforms
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence
 from models import Encoder, DecoderWithAttention
-from datasets import *
+from datasets import *  # noqa: F403
 import utils
 from nltk.translate.bleu_score import corpus_bleu
 import json
 import os
 from tqdm.auto import tqdm
-
+import mlflow
+import warnings
+warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cudnn.benchmark = True  # set to true only if inputs to model are fixed size; otherwise lot of computational overhead
@@ -26,7 +28,7 @@ dropout = 0.5
 
 # Training parameters
 start_epoch = 0
-epochs = 10 # number of epochs to train for (if early stopping is not triggered)
+epochs = 5 # number of epochs to train for (if early stopping is not triggered)
 epochs_since_improvement = 0  # keeps track of number of epochs since there's been an improvement in validation BLEU
 batch_size = 32
 workers = 0  # for data-loading; right now, only 1 works with h5py
@@ -37,7 +39,26 @@ alpha_c = 1.0  # regularization parameter for 'doubly stochastic attention', as 
 best_bleu4 = 0.0  # BLEU-4 score right now
 print_freq = 100  # print training/validation stats every __ batches
 fine_tune_encoder = False  # fine-tune encoder?
-checkpoint = None  # path to checkpoint, None if none
+checkpoint = 'Models/checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar'  # path to checkpoint, None if none
+
+
+mlflow.set_experiment('Image Captioning')
+mlflow.set_tracking_uri('http://localhost:5000')
+mlflow.start_run(log_system_metrics=True)
+mlflow.log_param('emb_dim', emb_dim)
+mlflow.log_param('attention_dim', attention_dim)
+mlflow.log_param('decoder_dim', decoder_dim)
+mlflow.log_param('dropout', dropout)
+mlflow.log_param('epochs', epochs)
+mlflow.log_param('batch_size', batch_size)
+mlflow.log_param('workers', workers)
+mlflow.log_param('encoder_lr', encoder_lr)
+mlflow.log_param('decoder_lr', decoder_lr)
+mlflow.log_param('grad_clip', grad_clip)
+mlflow.log_param('alpha_c', alpha_c)
+mlflow.log_param('fine_tune_encoder', fine_tune_encoder)
+mlflow.log_param('checkpoint', checkpoint)
+mlflow.log_param('device', device)
 
 
 def train_model(data_folder, data_name):
@@ -267,6 +288,10 @@ def train(
         top5accs.update(top5, sum(decode_lengths))
         batch_time.update(time.time() - start)
 
+        mlflow.log_metric('train_loss', loss.item(), step=i)
+        mlflow.log_metric('train_top5', top5, step=i)
+        
+        
         if i % print_freq == 0:
             print(
                 "\nEpoch: [{0}][{1}/{2}]\t"
@@ -339,6 +364,9 @@ def validate(val_loader, encoder, decoder, criterion):
             top5accs.update(top5, sum(decode_lengths))
             batch_time.update(time.time() - start)
 
+            mlflow.log_metric('val_loss', loss.item(), step=i)
+            mlflow.log_metric('val_top5', top5, step=i)
+            
             start = time.time()
 
             if i % print_freq == 0:
@@ -389,6 +417,9 @@ def validate(val_loader, encoder, decoder, criterion):
             assert len(references) == len(hypotheses)
 
             bleu4 = corpus_bleu(references, hypotheses)
+            
+            mlflow.log_metric('val_bleu4', bleu4, step=i)
+            
             print(
                 "* LOSS - {loss.avg:.3f}, TOP-5 ACCURACY - {top5.avg:.3f}, BLEU-4 - {bleu}\n".format(
                     loss=losses, top5=top5accs, bleu=bleu4

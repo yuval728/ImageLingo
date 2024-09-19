@@ -7,6 +7,7 @@ from PIL import Image
 from collections import Counter
 from random import seed, sample, choice
 from tqdm import tqdm
+import mlflow
 
 
 def create_input_files(dataset, json_path, image_folder, captions_per_image, min_word_freq, output_folder, max_len=100):
@@ -220,11 +221,12 @@ def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder
     }
     model_dir = 'Models/'
     filename = 'checkpoint_'+data_name+'.pth.tar'
+    mlflow.log_artifact(os.path.join(model_dir,filename))
     torch.save(state,os.path.join(model_dir,filename))
     
     if is_best:
         torch.save(state, 'BEST_' + filename)
-        
+        mlflow.log_artifact(os.path.join(model_dir,'BEST_'+filename))
         
 class AverageMeter(object):
     """
@@ -259,7 +261,9 @@ def adjust_learning_rate(optimizer, shrink_factor):
     for param_group in optimizer.param_groups:
         param_group['lr'] = param_group['lr'] * shrink_factor
     
-    print("The new learning rate is %f\n" % (optimizer.param_groups[0]['lr'],))
+    print("The new learning rate is %f\n" % (optimizer.param_groups[0]['lr']))
+    
+    mlflow.log_param('learning_rate', optimizer.param_groups[0]['lr'])
     
 def accuracy(scores, targets, k):
     """
