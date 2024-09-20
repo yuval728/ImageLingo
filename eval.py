@@ -179,7 +179,7 @@ def evaluate(beam_size):
 if __name__ == '__main__':
     beam_size = 1
     
-    mlflow.set_experiment("Image Captioning")
+    mlflow.set_experiment("ImageLingo")
     mlflow.set_tracking_uri("http://localhost:5000")
     run_id = input("Enter the run ID: ")
     with mlflow.start_run( run_id=run_id, nested=True):

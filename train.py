@@ -42,7 +42,7 @@ fine_tune_encoder = False  # fine-tune encoder?
 checkpoint = 'Models/checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar'  # path to checkpoint, None if none
 
 
-mlflow.set_experiment('Image Captioning')
+mlflow.set_experiment('ImageLingo')
 mlflow.set_tracking_uri('http://localhost:5000')
 mlflow.start_run(log_system_metrics=True)
 mlflow.log_param('emb_dim', emb_dim)
