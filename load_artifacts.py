@@ -48,11 +48,11 @@ if __name__ == "__main__":
      
     encoder_model = load_model(args.encoder_model_name, args.encoder_model_version)
     encoder_traced_model = save_jit_model(encoder_model, args.encoder_model_name, os.path.join(args.base_path, args.encoder_save_name))
-    print(f"Encoder model saved at {args.encoder_save_name}")
+    print(f"Encoder model saved at {os.path.join(args.base_path, args.encoder_save_name)}")
     
     decoder_model = load_model(args.decoder_model_name, args.decoder_model_version)
     torch.save(decoder_model, os.path.join(args.base_path, args.decoder_save_name))
-    print(f"Decoder model saved at {args.decoder_save_name}")
+    print(f"Decoder model saved at {os.path.join(args.base_path, args.encoder_save_name)}")
     
     
     

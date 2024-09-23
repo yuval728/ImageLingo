@@ -5,3 +5,7 @@ env
 __pycache__
 Models
 mlruns
+model_store
+Artifacts
+logs
+test_images
