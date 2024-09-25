@@ -11,7 +11,6 @@ COPY requirements.txt  /home/model-server/
 
 # RUN pip install --no-cache-dir -r /home/model-server/requirements.txt
 
-
 # Expose the port
 EXPOSE 8080 8081 8082
 
