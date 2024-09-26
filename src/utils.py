@@ -195,7 +195,7 @@ def clip_gradient(optimizer, grad_clip):
             if param.grad is not None:
                 param.grad.data.clamp_(-grad_clip, grad_clip)
                 
-def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder,encoder_optimizer, decoder_optimizer, bleu4, is_best):
+def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder,encoder_optimizer, decoder_optimizer, bleu4, is_best, model_dir='checkpoints/'):
     """
     Saves model checkpoint.
 
@@ -219,13 +219,13 @@ def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder
         'encoder_optimizer': encoder_optimizer,
         'decoder_optimizer': decoder_optimizer
     }
-    model_dir = 'Models/'
+    # model_dir = 'checkpoints/'
     filename = 'checkpoint_'+data_name+'.pth.tar'
     mlflow.log_artifact(os.path.join(model_dir,filename))
     torch.save(state,os.path.join(model_dir,filename))
     
     if is_best:
-        torch.save(state, 'BEST_' + filename)
+        torch.save(state, os.path.join(model_dir,'BEST_'+filename))
         mlflow.log_artifact(os.path.join(model_dir,'BEST_'+filename))
         
 class AverageMeter(object):

@@ -30,13 +30,6 @@
 **/obj
 **/secrets.dev.yaml
 **/values.dev.yaml
-**/.dvc
-**/mlruns
-**/Images
-**/Data
-**/test_images
-**/logs
-**/env
-**/Models
+
 LICENSE
 README.md

@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence
 from models import Encoder, DecoderWithAttention
-from datasets import *  # noqa: F403
+from datasets import CaptionDataset
 import utils
 from nltk.translate.bleu_score import corpus_bleu
 import json
@@ -15,6 +15,8 @@ import os
 from tqdm.auto import tqdm
 import mlflow
 import warnings
+import argparse
+
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,47 +30,46 @@ dropout = 0.5
 
 # Training parameters
 start_epoch = 0
-epochs = 5 # number of epochs to train for (if early stopping is not triggered)
+epochs = 5  # number of epochs to train for (if early stopping is not triggered)
 epochs_since_improvement = 0  # keeps track of number of epochs since there's been an improvement in validation BLEU
-batch_size = 32
+batch_size = 128
 workers = 0  # for data-loading; right now, only 1 works with h5py
 encoder_lr = 1e-4  # learning rate for encoder if fine-tuning
 decoder_lr = 4e-4  # learning rate for decoder
 grad_clip = 5.0  # clip gradients at an absolute value of
-alpha_c = 1.0  # regularization parameter for 'doubly stochastic attention', as in the paper
+alpha_c = (
+    1.0  # regularization parameter for 'doubly stochastic attention', as in the paper
+)
 best_bleu4 = 0.0  # BLEU-4 score right now
 print_freq = 100  # print training/validation stats every __ batches
 fine_tune_encoder = False  # fine-tune encoder?
-checkpoint = 'Models/checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar'  # path to checkpoint, None if none
+# path to checkpoint, None if none
 
-
-mlflow.set_experiment('ImageLingo')
-mlflow.set_tracking_uri('http://localhost:5000')
+mlflow.set_experiment("ImageLingo")
+mlflow.set_tracking_uri("http://localhost:5000")
 mlflow.start_run(log_system_metrics=True)
-mlflow.log_param('emb_dim', emb_dim)
-mlflow.log_param('attention_dim', attention_dim)
-mlflow.log_param('decoder_dim', decoder_dim)
-mlflow.log_param('dropout', dropout)
-mlflow.log_param('epochs', epochs)
-mlflow.log_param('batch_size', batch_size)
-mlflow.log_param('workers', workers)
-mlflow.log_param('encoder_lr', encoder_lr)
-mlflow.log_param('decoder_lr', decoder_lr)
-mlflow.log_param('grad_clip', grad_clip)
-mlflow.log_param('alpha_c', alpha_c)
-mlflow.log_param('fine_tune_encoder', fine_tune_encoder)
-mlflow.log_param('checkpoint', checkpoint)
-mlflow.log_param('device', device)
+mlflow.log_param("emb_dim", emb_dim)
+mlflow.log_param("attention_dim", attention_dim)
+mlflow.log_param("decoder_dim", decoder_dim)
+mlflow.log_param("dropout", dropout)
+mlflow.log_param("epochs", epochs)
+mlflow.log_param("batch_size", batch_size)
+mlflow.log_param("workers", workers)
+mlflow.log_param("encoder_lr", encoder_lr)
+mlflow.log_param("decoder_lr", decoder_lr)
+mlflow.log_param("grad_clip", grad_clip)
+mlflow.log_param("alpha_c", alpha_c)
+mlflow.log_param("fine_tune_encoder", fine_tune_encoder)
+mlflow.log_param("device", device)
 
 
-def train_model(data_folder, data_name):
+def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints"):
     """
     Training and validation of model.
     """
     global \
         best_bleu4, \
         epochs_since_improvement, \
-        checkpoint, \
         start_epoch, \
         fine_tune_encoder, \
         word_map
@@ -86,12 +87,10 @@ def train_model(data_folder, data_name):
             dropout=dropout,
         )
 
-
         decoder_optimizer = torch.optim.Adam(
             params=filter(lambda p: p.requires_grad, decoder.parameters()),
             lr=decoder_lr,
         )
-
 
         encoder = Encoder()
         encoder.fine_tune(fine_tune=fine_tune_encoder)
@@ -201,6 +200,7 @@ def train_model(data_folder, data_name):
             decoder_optimizer,
             recent_bleu4,
             is_best,
+            model_dir=save_dir,
         )
 
 
@@ -288,10 +288,9 @@ def train(
         top5accs.update(top5, sum(decode_lengths))
         batch_time.update(time.time() - start)
 
-        mlflow.log_metric('train_loss', loss.item(), step=i)
-        mlflow.log_metric('train_top5', top5, step=i)
-        
-        
+        mlflow.log_metric("train_loss", loss.item(), step=i)
+        mlflow.log_metric("train_top5", top5, step=i)
+
         if i % print_freq == 0:
             print(
                 "\nEpoch: [{0}][{1}/{2}]\t"
@@ -340,8 +339,8 @@ def validate(val_loader, encoder, decoder, criterion):
             imgs = imgs.to(device)
             caps = caps.to(device)
             caplens = caplens.to(device)
-            allcaps= allcaps.to(device)
-            
+            allcaps = allcaps.to(device)
+
             if encoder is not None:
                 imgs = encoder(imgs)
 
@@ -352,8 +351,10 @@ def validate(val_loader, encoder, decoder, criterion):
             targets = cap_sorted[:, 1:]
 
             scores_copy = scores.clone()
-            scores= pack_padded_sequence(scores, decode_lengths, batch_first=True).data
-            targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
+            scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+            targets = pack_padded_sequence(
+                targets, decode_lengths, batch_first=True
+            ).data
 
             loss = criterion(scores, targets)
 
@@ -364,9 +365,9 @@ def validate(val_loader, encoder, decoder, criterion):
             top5accs.update(top5, sum(decode_lengths))
             batch_time.update(time.time() - start)
 
-            mlflow.log_metric('val_loss', loss.item(), step=i)
-            mlflow.log_metric('val_top5', top5, step=i)
-            
+            mlflow.log_metric("val_loss", loss.item(), step=i)
+            mlflow.log_metric("val_top5", top5, step=i)
+
             start = time.time()
 
             if i % print_freq == 0:
@@ -417,9 +418,9 @@ def validate(val_loader, encoder, decoder, criterion):
             assert len(references) == len(hypotheses)
 
             bleu4 = corpus_bleu(references, hypotheses)
-            
-            mlflow.log_metric('val_bleu4', bleu4, step=i)
-            
+
+            mlflow.log_metric("val_bleu4", bleu4, step=i)
+
             print(
                 "* LOSS - {loss.avg:.3f}, TOP-5 ACCURACY - {top5.avg:.3f}, BLEU-4 - {bleu}\n".format(
                     loss=losses, top5=top5accs, bleu=bleu4
@@ -429,5 +430,33 @@ def validate(val_loader, encoder, decoder, criterion):
     return bleu4
 
 
-if __name__=='__main__':
-    train_model(data_folder='Data', data_name='flickr8k_4_cap_per_img_4_min_word_freq')
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train Image Captioning Model")
+    parser.add_argument(
+        "--data_folder",
+        default="data",
+        help="folder with data files saved by create_input_files.py",
+    )
+    parser.add_argument(
+        "--data_name",
+        default="flickr8k_4_cap_per_img_4_min_word_freq",
+        help="base name shared by data files",
+    )
+    parser.add_argument("--checkpoint", default=None, help="path to checkpoint")
+    parser.add_argument(
+        "--save_dir", default="checkpoints", help="directory to save checkpoints"
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    mlflow.log_params(vars(args))
+
+    
+    train_model(
+        data_folder=args.data_folder,
+        data_name=args.data_name,
+        checkpoint=args.checkpoint,
+        save_dir=args.save_dir,
+    )

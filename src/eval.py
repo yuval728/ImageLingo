@@ -11,15 +11,16 @@ from tqdm import tqdm
 import json
 import warnings
 import mlflow
+# import argparse
 warnings.filterwarnings("ignore")
 
 
-data_folder = 'Data'
+data_folder = 'data/Data'
 data_name = 'flickr8k_4_cap_per_img_4_min_word_freq'
 
-checkpoint = 'BEST_checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar'
+checkpoint = 'checkpoints/BEST_checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar'
 
-word_map_file = 'Data/WORDMAP_flickr8k_4_cap_per_img_4_min_word_freq.json'
+word_map_file = 'data/Data/WORDMAP_flickr8k_4_cap_per_img_4_min_word_freq.json'
 
 device =torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 cudnn.benchmark = True
@@ -74,7 +75,7 @@ def evaluate(beam_size):
         image=image.to(device)
         
         encoder_out = encoder(image)
-        enc_image_size = encoder_out.size(1)
+        # enc_image_size = encoder_out.size(1)
         encoder_dim = encoder_out.size(3)
         
         encoder_out = encoder_out.view(1,-1,encoder_dim)
