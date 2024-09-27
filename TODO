@@ -1,3 +1,2 @@
 Add torchinfo for model training to mlflow
-add argparse for model each module
-update dockerfile
+add argparse for eval module
