@@ -221,8 +221,8 @@ def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder
     }
     # model_dir = 'checkpoints/'
     filename = 'checkpoint_'+data_name+'.pth.tar'
-    mlflow.log_artifact(os.path.join(model_dir,filename))
     torch.save(state,os.path.join(model_dir,filename))
+    mlflow.log_artifact(os.path.join(model_dir,filename))
     
     if is_best:
         torch.save(state, os.path.join(model_dir,'BEST_'+filename))

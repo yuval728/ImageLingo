@@ -32,8 +32,8 @@ dropout = 0.5
 start_epoch = 0
 epochs = 5  # number of epochs to train for (if early stopping is not triggered)
 epochs_since_improvement = 0  # keeps track of number of epochs since there's been an improvement in validation BLEU
-batch_size = 128
-workers = 0  # for data-loading; right now, only 1 works with h5py
+batch_size = 160
+workers = 0  # for data-loading; right now, only 0 works with h5py
 encoder_lr = 1e-4  # learning rate for encoder if fine-tuning
 decoder_lr = 4e-4  # learning rate for decoder
 grad_clip = 5.0  # clip gradients at an absolute value of
@@ -41,9 +41,9 @@ alpha_c = (
     1.0  # regularization parameter for 'doubly stochastic attention', as in the paper
 )
 best_bleu4 = 0.0  # BLEU-4 score right now
-print_freq = 100  # print training/validation stats every __ batches
+print_freq = 10  # print training/validation stats every __ batches
 fine_tune_encoder = False  # fine-tune encoder?
-# path to checkpoint, None if none
+
 
 mlflow.set_experiment("ImageLingo")
 mlflow.set_tracking_uri("http://localhost:5000")
@@ -92,8 +92,7 @@ def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints")
             lr=decoder_lr,
         )
 
-        encoder = Encoder()
-        encoder.fine_tune(fine_tune=fine_tune_encoder)
+        encoder = Encoder(fine_tune=fine_tune_encoder)
         encoder_optimizer = (
             torch.optim.Adam(
                 params=filter(lambda p: p.requires_grad, encoder.parameters()),
@@ -255,9 +254,6 @@ def train(
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        # print(pack_padded_sequence(scores, decode_lengths, batch_first=True).data)
-        # scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-        # targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
         scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
         targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
@@ -265,12 +261,14 @@ def train(
         loss = criterion(scores, targets)
 
         # Add doubly stochastic attention regularization
-        loss += alpha_c * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
+        loss = loss + alpha_c * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
 
-        # Back prop.
+        # torch.autograd.set_detect_anomaly(True)
+        
         decoder_optimizer.zero_grad()
         if encoder_optimizer is not None:
             encoder_optimizer.zero_grad()
+            
         loss.backward()
 
         # Clip gradients
@@ -417,15 +415,15 @@ def validate(val_loader, encoder, decoder, criterion):
 
             assert len(references) == len(hypotheses)
 
-            bleu4 = corpus_bleu(references, hypotheses)
+        bleu4 = corpus_bleu(references, hypotheses)
 
-            mlflow.log_metric("val_bleu4", bleu4, step=i)
+        mlflow.log_metric("val_bleu4", bleu4, step=i)
 
-            print(
-                "* LOSS - {loss.avg:.3f}, TOP-5 ACCURACY - {top5.avg:.3f}, BLEU-4 - {bleu}\n".format(
-                    loss=losses, top5=top5accs, bleu=bleu4
-                )
+        print(
+            "* LOSS - {loss.avg:.3f}, TOP-5 ACCURACY - {top5.avg:.3f}, BLEU-4 - {bleu}\n".format(
+                loss=losses, top5=top5accs, bleu=bleu4
             )
+        )
 
     return bleu4
 
