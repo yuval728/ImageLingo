@@ -263,13 +263,11 @@ class ImageLingo(nn.Module):
         self,
         encoder,
         decoder,
-        vocab_size,
     ):
         super(ImageLingo, self).__init__()
 
         self.encoder = encoder
         self.decoder = decoder
-        self.vocab_size = vocab_size
 
     def forward(self, images, captions, caption_lengths):
         encoder_out = self.encoder(images)
@@ -305,6 +303,6 @@ if __name__ == "__main__":
     print(outputs.size())
     print(alphas.size())
 
-    model = ImageLingo(encoder, decoder, vocab_size)
+    model = ImageLingo(encoder, decoder)
 
     # torch.jit.trace( model, (images, captions, caption_lengths) )

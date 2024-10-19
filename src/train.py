@@ -39,6 +39,11 @@ def train_model(
         word_map = json.load(j)
 
     if checkpoint is None:
+        
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        
         decoder = DecoderWithAttention(
             attention_dim=args.attention_dim,
             embed_dim=args.emb_dim,
@@ -410,6 +415,7 @@ def parse_args():
     )
 
     # Hyperparameters
+    parser.add_argument("--seed", type=int, default=42, help="random seed")
     parser.add_argument(
         "--emb_dim", type=int, default=512, help="dimension of word embeddings"
     )
