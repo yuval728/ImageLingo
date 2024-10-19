@@ -43,33 +43,43 @@ class LingoHandler(BaseHandler):
         image = data[0].get("data") or data[0].get("body")
         image = Image.open(io.BytesIO(image)).convert("RGB")
         image = self.transforms(image).unsqueeze(0)
+        # k = data[0].get("k") or 1
         return image
     
-    def inference(self, image):
+    def inference(self, image, k=1):
         
         encoder_out = self.encoder(image)
-        enc_image_size = encoder_out.size(1)
         encoder_dim = encoder_out.size(3)
         encoder_out = encoder_out.view(1, -1, encoder_dim)
+        num_pixels = encoder_out.size(1)
+        encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)
         
-        k=1
-        encoder_out = encoder_out.expand(k, encoder_out.size(1), encoder_out.size(2))
+
         k_prev_words = torch.LongTensor([[self.word_map['<start>']]] * k)
         seqs = k_prev_words
         top_k_scores = torch.zeros(k, 1)
+        seqs_alpha = torch.ones(k, 1, num_pixels)
         
         complete_seqs = list()
         complete_seqs_scores = list()
+        complete_seqs_alpha = list()
         
         step = 1
-        h, c = self.decoder.init_hidden_state(encoder_out)
+        h = torch.zeros(k, self.decoder.decoder_dim)
+        c = torch.zeros(k, self.decoder.decoder_dim)
         
         while True:
             embeddings = self.decoder.embedding(k_prev_words).squeeze(1)
-            awe, _ = self.decoder.attention(encoder_out, h)
-            gate = self.decoder.sigmoid(self.decoder.f_beta(h))
-            awe = gate * awe
-            h, c = self.decoder.decode_step(torch.cat([embeddings, awe], dim=1), (h, c))
+            awe, alpha = self.decoder.attention(encoder_out, h)
+            alpha = alpha.view(-1, num_pixels)
+
+            lstm_input = torch.cat([embeddings, awe], dim=1)
+            lstm_output, (h_new, c_new) = self.decoder.lstm(
+                lstm_input.unsqueeze(1), (h.unsqueeze(0), c.unsqueeze(0))
+            )
+            h = h_new.squeeze(0)
+            c = c_new.squeeze(0)
+
             scores = self.decoder.fc(h)
             scores = F.log_softmax(scores, dim=1)
             scores = top_k_scores.expand_as(scores) + scores
@@ -83,6 +93,7 @@ class LingoHandler(BaseHandler):
             next_word_inds = top_words % len(self.word_map)
             
             seqs = torch.cat([seqs[prev_word_inds], next_word_inds.unsqueeze(1)], dim=1)
+            seqs_alpha = torch.cat([seqs_alpha[prev_word_inds], alpha[prev_word_inds].unsqueeze(1)], dim=1)
             
             incomplete_inds = [ind for ind, next_word in enumerate(next_word_inds) if next_word != self.word_map['<end>']]
             complete_inds = list(set(range(len(next_word_inds))) - set(incomplete_inds))
@@ -90,6 +101,7 @@ class LingoHandler(BaseHandler):
             if len(complete_inds) > 0:
                 complete_seqs.extend(seqs[complete_inds].tolist())
                 complete_seqs_scores.extend(top_k_scores[complete_inds])
+                complete_seqs_alpha.extend(seqs_alpha[complete_inds].tolist())
                 
             k -= len(complete_inds)
             

@@ -5,12 +5,12 @@
     python src/train.py --data_folder data/Data --checkpoint checkpoints/checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar --save_dir checkpoints 
 
 ### Evaluate the model:
-    python src/eval.py   
+    python src/eval.py --run_id 0f622c3e27c841aa9f029e44ce0c9d08  
 
 ### Register the model:
     <!-- mlflow models add -m checkpoints/checkpoint_flickr8k_4_cap_per_img_4_min_word_freq.pth.tar -n flickr8k -->
-    python src/model_register.py --run_id a3b39b26b120470eb299bc8273b7988e  --model_type encoder --model_name encoder --best_artifact 
-    python src/model_register.py --run_id a3b39b26b120470eb299bc8273b7988e  --model_type decoder --model_name decoder --best_artifact 
+    python src/model_register.py --run_id 0f622c3e27c841aa9f029e44ce0c9d08 --model_type encoder --model_name encoder --best_artifact 
+    python src/model_register.py --run_id 0f622c3e27c841aa9f029e44ce0c9d08 --model_type decoder --model_name decoder --best_artifact 
 
 ### load the artifacts:
     python src/load_artifacts.py --base_path artifacts --word_map_path data/Data/WORDMAP_flickr8k_4_cap_per_img_4_min_word_freq.json --encoder_model_version 8 --decoder_model_version 4  
