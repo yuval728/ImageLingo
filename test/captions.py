@@ -66,8 +66,8 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
     
     step=1
     
-    h, c =decoder.init_hidden_state(encoder_out)
-    
+    h = torch.zeros(k, decoder.decoder_dim).to(image.device)
+    c = torch.zeros(k, decoder.decoder_dim).to(image.device)
     # s is a number less than or equal to k, because sequences are removed from this process once they hit <end>
     while True:
         
@@ -77,16 +77,17 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
         
         alpha = alpha.view(-1, enc_image_size, enc_image_size)
         
-        gate = decoder.sigmoid(decoder.f_beta(h))
+        lstm_input = torch.cat([embeddings, awe], dim=1)
+        lstm_output, (h_new, c_new) = decoder.lstm(
+            lstm_input.unsqueeze(1), (h.unsqueeze(0), c.unsqueeze(0))
+        )
         
-        awe = gate*awe
-        
-        h, c = decoder.decode_step(torch.cat([embeddings, awe], dim=1), (h,c))
+        h = h_new.squeeze(0)
+        c = c_new.squeeze(0)
         
         scores = decoder.fc(h)
         scores = F.log_softmax(scores, dim=1)
-        
-        scores = top_k_scores.expand_as(scores)+scores
+        scores = top_k_scores.expand_as(scores) + scores
         
         if step==1:
             top_k_scores, top_k_words = scores[0].topk(k, 0, True, True)

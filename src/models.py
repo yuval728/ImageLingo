@@ -4,13 +4,12 @@ import torchvision
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 class Encoder(nn.Module):
     """
     Encoder.
     """
 
-    def __init__(self, encoded_image_size=14):
+    def __init__(self, encoded_image_size=14, fine_tune=False):
         super(Encoder, self).__init__()
 
         self.enc_image_size = encoded_image_size
@@ -28,7 +27,7 @@ class Encoder(nn.Module):
             (encoded_image_size, encoded_image_size)
         )
 
-        self.fine_tune()
+        self.fine_tune(fine_tune)
 
     def forward(self, images):
         """
@@ -151,23 +150,9 @@ class DecoderWithAttention(nn.Module):
         )
         self.dropout = nn.Dropout(p=self.dropout)
 
-        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
+        self.lstm = nn.LSTM(embed_dim + encoder_dim, decoder_dim, batch_first=True)
 
-        self.init_h = nn.Linear(
-            encoder_dim, decoder_dim
-        )  # linear layer to find initial hidden state of LSTMCell
-        self.init_c = nn.Linear(
-            encoder_dim, decoder_dim
-        )  # linear layer to find initial cell state of LSTMCell
-
-        self.f_beta = nn.Linear(
-            decoder_dim, encoder_dim
-        )  # linear layer to create a sigmoid-activated gate
-
-        self.sigmoid = nn.Sigmoid()
-        self.fc = nn.Linear(
-            decoder_dim, vocab_size
-        )  # linear layer to find scores over vocabulary
+        self.fc = nn.Linear(decoder_dim, vocab_size)
 
         self.init_weights()
 
@@ -199,20 +184,6 @@ class DecoderWithAttention(nn.Module):
         for p in self.embedding.parameters():
             p.requires_grad = fine_tune
 
-    def init_hidden_state(self, encoder_out):
-        """
-        Creates the initial hidden and cell states for the decoder's LSTM based on the encoded images.
-
-        :param encoder_out: encoded images, a tensor of dimension (batch_size, num_pixels, encoder_dim)
-
-        return: hidden state, cell state
-        """
-
-        mean_encoder_out = encoder_out.mean(dim=1)
-        h = self.init_h(mean_encoder_out)
-        c = self.init_c(mean_encoder_out)
-        return h, c
-
     def forward(self, encoder_out, encoded_captions, caption_lengths):
         """
         Forward propagation
@@ -230,30 +201,29 @@ class DecoderWithAttention(nn.Module):
 
         encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # Flatten image
         num_pixels = encoder_out.size(1)
-
-        # Sort input data by decreasing lengths; why? apparent below
-        caption_lengths, sort_ind = caption_lengths.squeeze(1).sort(
-            dim=0, descending=True
-        )
-
+        
+        
+        caption_lengths, sort_ind = caption_lengths.squeeze(1).sort(dim=0, descending=True)
         encoder_out = encoder_out[sort_ind]
         encoded_captions = encoded_captions[sort_ind]
 
-        embeddings = self.embedding(
-            encoded_captions
-        )  # (batch_size, max_caption_length, embed_dim)
-
-        h, c = self.init_hidden_state(encoder_out=encoder_out)
-
+        embeddings = self.embedding(encoded_captions)
+        
         # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
         # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
 
-        predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(
-            device
-        )
+        # Initialize LSTM state
+        h_t = torch.zeros(batch_size, self.decoder_dim).to(encoder_out.device)
+        c_t = torch.zeros(batch_size, self.decoder_dim).to(encoder_out.device)
 
-        alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(device)
+        outputs = torch.zeros(
+            batch_size, max(decode_lengths), vocab_size
+        ).to(encoder_out.device)
+        alphas = torch.zeros(
+            batch_size, max(decode_lengths), num_pixels
+        ).to(encoder_out.device)
+
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -261,24 +231,78 @@ class DecoderWithAttention(nn.Module):
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])  # noqa: E741
 
-            attention_weighted_encoding, alpha = self.attention(
-                encoder_out[:batch_size_t], h[:batch_size_t]
+            context_vector, alpha = self.attention(
+                encoder_out[:batch_size_t], h_t[:batch_size_t]
             )
 
-            gate = self.sigmoid(self.f_beta(h[:batch_size_t]))
-
-            attention_weighted_encoding = gate * attention_weighted_encoding
-
-            h, c = self.decode_step(
-                torch.cat(
-                    [embeddings[:batch_size_t, t, :], attention_weighted_encoding],
-                    dim=1,
-                ),
-                (h[:batch_size_t], c[:batch_size_t]),
+            lstm_input = torch.cat(
+                (embeddings[:batch_size_t, t], context_vector), dim=1
             )
 
-            preds = self.fc(self.dropout(h))  # type: ignore
-            predictions[:batch_size_t, t, :] = preds
+            temp, (h_t_new, c_t_new) = self.lstm(
+                lstm_input.unsqueeze(1),
+                (h_t[:batch_size_t].unsqueeze(0), c_t[:batch_size_t].unsqueeze(0)),
+            )
+            h_t = h_t.clone()  # Create a copy to avoid in-place modification
+            h_t[:batch_size_t] = h_t_new.squeeze(0)
+            c_t = c_t.clone()  # Create a copy to avoid in-place modification
+            c_t[:batch_size_t] = c_t_new.squeeze(0)
+
+
+
+            output = self.fc(h_t[:batch_size_t])
+
+            outputs[:batch_size_t, t, :] = output
             alphas[:batch_size_t, t, :] = alpha
 
-        return predictions, encoded_captions, decode_lengths, alphas, sort_ind
+        return outputs, encoded_captions, decode_lengths, alphas, sort_ind
+
+
+class ImageLingo(nn.Module):
+    def __init__(
+        self,
+        encoder,
+        decoder,
+    ):
+        super(ImageLingo, self).__init__()
+
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, images, captions, caption_lengths):
+        encoder_out = self.encoder(images)
+        outputs = self.decoder(encoder_out, captions, caption_lengths)
+        return outputs
+
+
+if __name__ == "__main__":
+    from datasets import CaptionDataset
+    import json
+
+    word_map_file = "data/Data/WORDMAP_flickr8k_4_cap_per_img_4_min_word_freq.json"
+    with open(word_map_file, "r") as j:
+        word_map = json.load(j)
+
+    rev_word_map = {v: k for k, v in word_map.items()}
+    vocab_size = len(word_map)
+    print("vocab_size:", vocab_size)
+
+    test_dataset = CaptionDataset(
+        data_folder="data/Data",
+        data_name="flickr8k_4_cap_per_img_4_min_word_freq",
+        split="TEST",
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=1, shuffle=True, num_workers=0, pin_memory=True
+    )
+    images, captions, caption_lengths, _ = next(iter(test_loader))
+
+    encoder = Encoder()
+    decoder = DecoderWithAttention( attention_dim=512, embed_dim=512, decoder_dim=512, vocab_size=vocab_size, encoder_dim=2048, dropout=0.5)
+    outputs, encoded_captions, decode_lengths, alphas, sort_ind = decoder(encoder(images), captions, caption_lengths)
+    print(outputs.size())
+    print(alphas.size())
+
+    model = ImageLingo(encoder, decoder)
+
+    # torch.jit.trace( model, (images, captions, caption_lengths) )

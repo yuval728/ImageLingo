@@ -23,83 +23,47 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cudnn.benchmark = True  # set to true only if inputs to model are fixed size; otherwise lot of computational overhead
 print(device)
 
-emb_dim = 512  # dimension of word embeddings
-attention_dim = 512  # dimension of attention linear layers
-decoder_dim = 512  # dimension of decoder RNN
-dropout = 0.5
 
-# Training parameters
-start_epoch = 0
-epochs = 5  # number of epochs to train for (if early stopping is not triggered)
-epochs_since_improvement = 0  # keeps track of number of epochs since there's been an improvement in validation BLEU
-batch_size = 128
-workers = 0  # for data-loading; right now, only 1 works with h5py
-encoder_lr = 1e-4  # learning rate for encoder if fine-tuning
-decoder_lr = 4e-4  # learning rate for decoder
-grad_clip = 5.0  # clip gradients at an absolute value of
-alpha_c = (
-    1.0  # regularization parameter for 'doubly stochastic attention', as in the paper
-)
-best_bleu4 = 0.0  # BLEU-4 score right now
-print_freq = 100  # print training/validation stats every __ batches
-fine_tune_encoder = False  # fine-tune encoder?
-# path to checkpoint, None if none
-
-mlflow.set_experiment("ImageLingo")
-mlflow.set_tracking_uri("http://localhost:5000")
-mlflow.start_run(log_system_metrics=True)
-mlflow.log_param("emb_dim", emb_dim)
-mlflow.log_param("attention_dim", attention_dim)
-mlflow.log_param("decoder_dim", decoder_dim)
-mlflow.log_param("dropout", dropout)
-mlflow.log_param("epochs", epochs)
-mlflow.log_param("batch_size", batch_size)
-mlflow.log_param("workers", workers)
-mlflow.log_param("encoder_lr", encoder_lr)
-mlflow.log_param("decoder_lr", decoder_lr)
-mlflow.log_param("grad_clip", grad_clip)
-mlflow.log_param("alpha_c", alpha_c)
-mlflow.log_param("fine_tune_encoder", fine_tune_encoder)
-mlflow.log_param("device", device)
-
-
-def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints"):
+def train_model(
+    data_folder, data_name, checkpoint=None, save_dir="checkpoints", args=None
+):
     """
     Training and validation of model.
     """
-    global \
-        best_bleu4, \
-        epochs_since_improvement, \
-        start_epoch, \
-        fine_tune_encoder, \
-        word_map
+    start_epoch = 0
+    epochs_since_improvement = 0
+    best_bleu4 = 0
 
     word_map_file = os.path.join(data_folder, "WORDMAP_" + data_name + ".json")
     with open(word_map_file, "r") as j:
         word_map = json.load(j)
 
     if checkpoint is None:
+        
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        
         decoder = DecoderWithAttention(
-            attention_dim=attention_dim,
-            embed_dim=emb_dim,
-            decoder_dim=decoder_dim,
+            attention_dim=args.attention_dim,
+            embed_dim=args.emb_dim,
+            decoder_dim=args.decoder_dim,
             vocab_size=len(word_map),
-            dropout=dropout,
+            dropout=args.dropout,
         )
 
         decoder_optimizer = torch.optim.Adam(
             params=filter(lambda p: p.requires_grad, decoder.parameters()),
-            lr=decoder_lr,
+            lr=args.decoder_lr,
         )
 
-        encoder = Encoder()
-        encoder.fine_tune(fine_tune=fine_tune_encoder)
+        encoder = Encoder(fine_tune=args.fine_tune_encoder)
         encoder_optimizer = (
             torch.optim.Adam(
                 params=filter(lambda p: p.requires_grad, encoder.parameters()),
-                lr=encoder_lr,
+                lr=args.encoder_lr,
             )
-            if fine_tune_encoder
+            if args.fine_tune_encoder
             else None
         )
 
@@ -113,11 +77,11 @@ def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints")
         encoder = checkpoint["encoder"]
         encoder_optimizer = checkpoint["encoder_optimizer"]
 
-        if fine_tune_encoder is True and encoder_optimizer is None:
-            encoder.fine_tune(fine_tune_encoder)
+        if args.fine_tune_encoder is True and encoder_optimizer is None:
+            encoder.fine_tune(args.fine_tune_encoder)
             encoder_optimizer = torch.optim.Adam(
                 params=filter(lambda p: p.requires_grad, encoder.parameters()),
-                lr=encoder_lr,
+                lr=args.encoder_lr,
             )
 
     encoder = encoder.to(device)
@@ -136,9 +100,9 @@ def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints")
             split="TRAIN",
             transform=transforms.Compose([normalize]),
         ),
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
-        num_workers=workers,
+        num_workers=args.workers,
         pin_memory=True,
     )
 
@@ -149,20 +113,20 @@ def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints")
             split="VAL",
             transform=transforms.Compose([normalize]),
         ),
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
-        num_workers=workers,
+        num_workers=args.workers,
         pin_memory=True,
     )
 
-    for epoch in tqdm(range(start_epoch, epochs)):
+    for epoch in tqdm(range(start_epoch, args.epochs)):
         if epochs_since_improvement == 20:
             break
 
         if epochs_since_improvement > 0 and epochs_since_improvement % 8 == 0:
             utils.adjust_learning_rate(decoder_optimizer, 0.8)
-            if fine_tune_encoder:
-                utils.adjust_learning_rate(encoder, 0.8)
+            if args.fine_tune_encoder:
+                utils.adjust_learning_rate(encoder_optimizer, 0.8)
 
         train(
             train_loader=train_loader,
@@ -172,6 +136,7 @@ def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints")
             encoder_optimizer=encoder_optimizer,
             decoder_optimizer=decoder_optimizer,
             epoch=epoch,
+            args=args,
         )
 
         recent_bleu4 = validate(
@@ -179,6 +144,8 @@ def train_model(data_folder, data_name, checkpoint=None, save_dir="checkpoints")
             encoder=encoder,
             decoder=decoder,
             criterion=criterion,
+            args=args,
+            word_map=word_map,
         )
 
         is_best = recent_bleu4 > best_bleu4
@@ -212,6 +179,7 @@ def train(
     encoder_optimizer,
     decoder_optimizer,
     epoch,
+    args,
 ):
     """
     Performs one epoch's training.
@@ -255,9 +223,6 @@ def train(
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        # print(pack_padded_sequence(scores, decode_lengths, batch_first=True).data)
-        # scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-        # targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
         scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
         targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
@@ -265,19 +230,21 @@ def train(
         loss = criterion(scores, targets)
 
         # Add doubly stochastic attention regularization
-        loss += alpha_c * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
+        loss = loss + args.alpha_c * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
 
-        # Back prop.
+        # torch.autograd.set_detect_anomaly(True)
+
         decoder_optimizer.zero_grad()
         if encoder_optimizer is not None:
             encoder_optimizer.zero_grad()
+
         loss.backward()
 
         # Clip gradients
-        if grad_clip is not None:
-            utils.clip_gradient(decoder_optimizer, grad_clip)
+        if args.grad_clip is not None:
+            utils.clip_gradient(decoder_optimizer, args.grad_clip)
             if encoder_optimizer is not None:
-                utils.clip_gradient(encoder_optimizer, grad_clip)
+                utils.clip_gradient(encoder_optimizer, args.grad_clip)
 
         decoder_optimizer.step()
         if encoder_optimizer is not None:
@@ -290,8 +257,10 @@ def train(
 
         mlflow.log_metric("train_loss", loss.item(), step=i)
         mlflow.log_metric("train_top5", top5, step=i)
+        
+        start = time.time()
 
-        if i % print_freq == 0:
+        if i % args.print_freq == 0:
             print(
                 "\nEpoch: [{0}][{1}/{2}]\t"
                 "Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
@@ -309,7 +278,7 @@ def train(
             )
 
 
-def validate(val_loader, encoder, decoder, criterion):
+def validate(val_loader, encoder, decoder, criterion, args, word_map):
     """
     Performs one epoch's validation
 
@@ -358,7 +327,7 @@ def validate(val_loader, encoder, decoder, criterion):
 
             loss = criterion(scores, targets)
 
-            loss += alpha_c * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
+            loss += args.alpha_c * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
 
             losses.update(loss.item(), sum(decode_lengths))
             top5 = utils.accuracy(scores, targets, 5)
@@ -370,7 +339,7 @@ def validate(val_loader, encoder, decoder, criterion):
 
             start = time.time()
 
-            if i % print_freq == 0:
+            if i % args.print_freq == 0:
                 print(
                     "\nValidation: [{0}/{1}]\t"
                     "Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
@@ -417,15 +386,15 @@ def validate(val_loader, encoder, decoder, criterion):
 
             assert len(references) == len(hypotheses)
 
-            bleu4 = corpus_bleu(references, hypotheses)
+        bleu4 = corpus_bleu(references, hypotheses)
 
-            mlflow.log_metric("val_bleu4", bleu4, step=i)
+        mlflow.log_metric("val_bleu4", bleu4, step=i)
 
-            print(
-                "* LOSS - {loss.avg:.3f}, TOP-5 ACCURACY - {top5.avg:.3f}, BLEU-4 - {bleu}\n".format(
-                    loss=losses, top5=top5accs, bleu=bleu4
-                )
+        print(
+            "* LOSS - {loss.avg:.3f}, TOP-5 ACCURACY - {top5.avg:.3f}, BLEU-4 - {bleu}\n".format(
+                loss=losses, top5=top5accs, bleu=bleu4
             )
+        )
 
     return bleu4
 
@@ -446,17 +415,88 @@ def parse_args():
     parser.add_argument(
         "--save_dir", default="checkpoints", help="directory to save checkpoints"
     )
+
+    # Hyperparameters
+    parser.add_argument("--seed", type=int, default=42, help="random seed")
+    parser.add_argument(
+        "--emb_dim", type=int, default=512, help="dimension of word embeddings"
+    )
+    parser.add_argument(
+        "--attention_dim",
+        type=int,
+        default=512,
+        help="dimension of attention linear layers",
+    )
+    parser.add_argument(
+        "--decoder_dim", type=int, default=512, help="dimension of decoder RNN"
+    )
+    parser.add_argument("--dropout", type=float, default=0.5, help="dropout rate")
+    parser.add_argument("--epochs", type=int, default=5, help="number of epochs")
+    parser.add_argument("--batch_size", type=int, default=160, help="batch size")
+    parser.add_argument(
+        "--workers", type=int, default=0, help="number of workers for data loading"
+    )
+    parser.add_argument(
+        "--encoder_lr", type=float, default=1e-4, help="learning rate for encoder"
+    )
+    parser.add_argument(
+        "--decoder_lr", type=float, default=4e-4, help="learning rate for decoder"
+    )
+    parser.add_argument(
+        "--grad_clip", type=float, default=5.0, help="gradient clipping value"
+    )
+    parser.add_argument(
+        "--alpha_c",
+        type=float,
+        default=1.0,
+        help="regularization parameter for attention",
+    )
+    parser.add_argument(
+        "--fine_tune_encoder",
+        action="store_true",
+        help="whether to fine-tune the encoder",
+        
+    )
+    parser.add_argument(
+        "--print_freq",
+        type=int,
+        default=10,
+        help="how often to print stats during training",
+    )
+
+    # MLflow-related arguments
+    parser.add_argument(
+        "--mlflow_experiment", default="ImageLingo", help="MLflow experiment name"
+    )
+    parser.add_argument(
+        "--mlflow_tracking_uri",
+        default="http://localhost:5000",
+        help="MLflow tracking URI",
+    )
+    parser.add_argument("--run_id", default=None, help="MLflow run ID (optional)")
+
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # MLflow setup
+    mlflow.set_experiment(args.mlflow_experiment)
+    mlflow.set_tracking_uri(args.mlflow_tracking_uri)
+    if args.run_id:
+        mlflow.start_run(run_id=args.run_id, nested=True, log_system_metrics=True)
+    else:
+        mlflow.start_run(log_system_metrics=True, nested=True)
+
+    # Log parameters
     mlflow.log_params(vars(args))
 
-    
+    print(args.fine_tune_encoder)
     train_model(
         data_folder=args.data_folder,
         data_name=args.data_name,
         checkpoint=args.checkpoint,
         save_dir=args.save_dir,
+        args=args,
     )
