@@ -257,6 +257,8 @@ def train(
 
         mlflow.log_metric("train_loss", loss.item(), step=i)
         mlflow.log_metric("train_top5", top5, step=i)
+        
+        start = time.time()
 
         if i % args.print_freq == 0:
             print(
@@ -483,9 +485,9 @@ if __name__ == "__main__":
     mlflow.set_experiment(args.mlflow_experiment)
     mlflow.set_tracking_uri(args.mlflow_tracking_uri)
     if args.run_id:
-        mlflow.start_run(run_id=args.run_id)
+        mlflow.start_run(run_id=args.run_id, nested=True, log_system_metrics=True)
     else:
-        mlflow.start_run()
+        mlflow.start_run(log_system_metrics=True, nested=True)
 
     # Log parameters
     mlflow.log_params(vars(args))
